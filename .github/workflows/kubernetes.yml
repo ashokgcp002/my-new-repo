@@ -1,17 +1,28 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main  # Adjust if your default branch is different
+
 jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: Login to GitHub Container Registry
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.REGISTRY_TOKEN }}
 
-      - name: Build and push the Docker image
+      - name: Build and push Docker image
         uses: docker/build-push-action@v3
         with:
+          context: .
           push: true
           tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
 
@@ -19,24 +30,27 @@ jobs:
     runs-on: ubuntu-22.04
     needs: build
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install gke-gcloud-auth-plugin
+      - name: Install gcloud and gke-gcloud-auth-plugin
         run: |
-          sudo apt-get update
-          sudo apt-get install -y google-cloud-sdk-gke-gcloud-auth-plugin
+          echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] http://packages.cloud.google.com/apt cloud-sdk main" \
+            | sudo tee /etc/apt/sources.list.d/google-cloud-sdk.list
+          curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+            | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+          sudo apt-get update && sudo apt-get install -y google-cloud-sdk google-cloud-sdk-gke-gcloud-auth-plugin
 
       - name: Install Helm
         uses: azure/setup-helm@v4
 
-      - name: Configure Kubeconfig
+      - name: Configure kubeconfig
         uses: azure/k8s-set-context@v4
         with:
           method: kubeconfig
           kubeconfig: ${{ secrets.KUBECONFIG }}
 
-      - name: Deploy the Helm chart
+      - name: Deploy using Helm
         run: |
           helm upgrade \
           ${{ github.event.repository.name }} \
@@ -46,8 +60,4 @@ jobs:
           --namespace ${{ github.event.repository.name }} \
           --set image=ghcr.io/${{ github.repository }}:${{ github.sha }} \
           --set dockerConfigJson.data="\{\"auths\":\{\"ghcr.io\":\{\"username\":\"${{ github.actor }}\"\,\"password\":\"${{ secrets.REGISTRY_TOKEN }}\"\}\}\}"
-
-on:
-  push:
-    if: github.ref_name == github.event.repository.default_branch
 
